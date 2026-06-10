@@ -64,6 +64,18 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
       .eq('id', session.id)
   }
 
+  async function generateQRCode(token) {
+    // Use window.location.origin so it works on both
+    // localhost AND Vercel automatically
+    const origin = window.location.origin
+    const scanUrl = `${origin}/scan/${token}`
+    const qr = await QRCode.toDataURL(scanUrl, {
+      width: 220,
+      color: { dark: '#ff4d2e', light: '#111827' }
+    })
+    return qr
+  }
+
   async function startSession() {
     if (!subject || !period) {
       alert('Please select subject and period!')
@@ -91,12 +103,7 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
       return
     }
 
-    const scanUrl = `${window.location.origin}/scan/${token}`
-    const qr = await QRCode.toDataURL(scanUrl, {
-      width: 220,
-      color: { dark: '#ff4d2e', light: '#111827' }
-    })
-
+    const qr = await generateQRCode(token)
     setQrUrl(qr)
     setSession(data)
     onSessionStart(data)
@@ -133,12 +140,7 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
       })
       .eq('id', session.id)
 
-    const scanUrl = `${window.location.origin}/scan/${newToken}`
-    const qr = await QRCode.toDataURL(scanUrl, {
-      width: 220,
-      color: { dark: '#ff4d2e', light: '#111827' }
-    })
-
+    const qr = await generateQRCode(newToken)
     setSession(prev => ({ ...prev, qr_token: newToken }))
     setQrUrl(qr)
     setExpired(false)
@@ -282,9 +284,7 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
                 letterSpacing: '1px',
                 textAlign: 'right'
               }}>
-                {timeLeft > 0
-                  ? `Auto expires in ${mins}:${secs}`
-                  : 'Expired'}
+                Auto expires in {mins}:{secs}
               </div>
             </div>
           )}
@@ -293,7 +293,9 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
           {qrUrl && !expired && (
             <div className="qr-box">
               <img src={qrUrl} alt="QR Code" width={200} />
-              <div className="qr-label">📱 Students scan this QR!</div>
+              <div className="qr-label">
+                📱 Students scan this QR!
+              </div>
               <div style={{
                 fontSize: '11px',
                 color: 'var(--text-secondary)',
@@ -318,7 +320,10 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
               borderRadius: '16px',
               marginBottom: '16px'
             }}>
-              <div style={{ fontSize: '48px', marginBottom: '12px' }}>⏰</div>
+              <div style={{
+                fontSize: '48px',
+                marginBottom: '12px'
+              }}>⏰</div>
               <div style={{
                 fontFamily: 'Orbitron, sans-serif',
                 fontSize: '14px',
@@ -331,7 +336,7 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
                 color: 'var(--text-secondary)',
                 letterSpacing: '1px'
               }}>
-                QR expired after 5 minutes for security.<br />
+                QR expired after 5 minutes.<br />
                 Generate a new one to continue.
               </div>
             </div>
