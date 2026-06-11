@@ -19,24 +19,15 @@ export default function EnrollModal({ onClose, onEnrolled, teacher }) {
   async function loadModels() {
     try {
       setStatus('Loading AI models...')
-      const MODEL_URL = window.location.origin + '/models'
-      console.log('Loading models from:', MODEL_URL)
-
+      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model'
       await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL)
-      console.log('✅ tinyFaceDetector loaded')
-
       await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL)
-      console.log('✅ faceLandmark68Net loaded')
-
       await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-      console.log('✅ faceRecognitionNet loaded')
-
       setModelsLoaded(true)
       setStatus('')
-      console.log('✅ All models loaded!')
     } catch (err) {
-      console.error('❌ Model loading error:', err)
-      setStatus('❌ Failed to load AI models! Check console.')
+      console.error('Model loading error:', err)
+      setStatus('❌ Failed to load AI models! ' + err.message)
     }
   }
 
@@ -54,7 +45,6 @@ export default function EnrollModal({ onClose, onEnrolled, teacher }) {
       if (videoRef.current) videoRef.current.srcObject = stream
     } catch (err) {
       setStatus('❌ Camera access denied!')
-      console.error(err)
     }
   }
 
