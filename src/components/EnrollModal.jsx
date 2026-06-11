@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import * as faceapi from 'face-api.js'
 
-export default function EnrollModal({ onClose, onEnrolled }) {
+export default function EnrollModal({ onClose, onEnrolled, teacher }) {
   const [name, setName] = useState('')
   const [usn, setUsn] = useState('')
   const [step, setStep] = useState('form')
@@ -17,20 +17,45 @@ export default function EnrollModal({ onClose, onEnrolled }) {
   }, [])
 
   async function loadModels() {
-    setStatus('Loading AI models...')
-    await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
-    await faceapi.nets.faceLandmark68Net.loadFromUri('/models')
-    await faceapi.nets.faceRecognitionNet.loadFromUri('/models')
-    setModelsLoaded(true)
-    setStatus('')
+    try {
+      setStatus('Loading AI models...')
+      const MODEL_URL = window.location.origin + '/models'
+      console.log('Loading models from:', MODEL_URL)
+
+      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL)
+      console.log('✅ tinyFaceDetector loaded')
+
+      await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL)
+      console.log('✅ faceLandmark68Net loaded')
+
+      await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+      console.log('✅ faceRecognitionNet loaded')
+
+      setModelsLoaded(true)
+      setStatus('')
+      console.log('✅ All models loaded!')
+    } catch (err) {
+      console.error('❌ Model loading error:', err)
+      setStatus('❌ Failed to load AI models! Check console.')
+    }
   }
 
   async function startCamera() {
-    if (!name || !usn) { alert('Enter name and USN first!'); return }
+    if (!name || !usn) {
+      alert('Enter name and USN first!')
+      return
+    }
     setStep('camera')
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
-    streamRef.current = stream
-    if (videoRef.current) videoRef.current.srcObject = stream
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' }
+      })
+      streamRef.current = stream
+      if (videoRef.current) videoRef.current.srcObject = stream
+    } catch (err) {
+      setStatus('❌ Camera access denied!')
+      console.error(err)
+    }
   }
 
   function stopCamera() {
@@ -39,26 +64,49 @@ export default function EnrollModal({ onClose, onEnrolled }) {
 
   async function captureFace() {
     setStatus('⚡ Detecting face...')
-    const detection = await faceapi
-      .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks().withFaceDescriptor()
+    try {
+      const detection = await faceapi
+        .detectSingleFace(
+          videoRef.current,
+          new faceapi.TinyFaceDetectorOptions()
+        )
+        .withFaceLandmarks()
+        .withFaceDescriptor()
 
-    if (!detection) { setStatus('❌ No face detected! Try again.'); return }
+      if (!detection) {
+        setStatus('❌ No face detected! Try again.')
+        return
+      }
 
-    setStatus('💾 Saving student...')
-    const { error } = await supabase.from('students').insert({
-      name, usn: usn.toUpperCase(),
-      face_descriptor: Array.from(detection.descriptor)
-    })
+      setStatus('💾 Saving student...')
+      const { error } = await supabase
+        .from('students')
+        .insert({
+          name,
+          usn: usn.toUpperCase(),
+          face_descriptor: Array.from(detection.descriptor)
+        })
 
-    if (error) {
-      setStatus(error.code === '23505' ? '❌ USN already exists!' : '❌ Error saving!')
-      return
+      if (error) {
+        if (error.code === '23505') {
+          setStatus('❌ USN already exists!')
+        } else {
+          setStatus('❌ Error: ' + error.message)
+        }
+        return
+      }
+
+      stopCamera()
+      setStatus('✅ Enrolled successfully!')
+      setTimeout(() => {
+        onEnrolled()
+        onClose()
+      }, 1500)
+
+    } catch (err) {
+      console.error('Face capture error:', err)
+      setStatus('❌ Error capturing face!')
     }
-
-    stopCamera()
-    setStatus('✅ Enrolled successfully!')
-    setTimeout(() => { onEnrolled(); onClose() }, 1500)
   }
 
   return (
@@ -82,11 +130,20 @@ export default function EnrollModal({ onClose, onEnrolled }) {
               value={usn}
               onChange={e => setUsn(e.target.value)}
             />
+
             {status && (
-              <p style={{ color: 'var(--accent-primary)', marginBottom: '12px', letterSpacing: '1px' }}>
+              <p style={{
+                color: status.includes('❌')
+                  ? 'var(--danger)'
+                  : 'var(--accent-primary)',
+                marginBottom: '12px',
+                letterSpacing: '1px',
+                fontSize: '13px'
+              }}>
                 {status}
               </p>
             )}
+
             <div className="modal-actions">
               <button
                 className="btn btn-primary"
@@ -96,7 +153,11 @@ export default function EnrollModal({ onClose, onEnrolled }) {
               >
                 {modelsLoaded ? '📷 Open Camera' : '⏳ Loading AI...'}
               </button>
-              <button className="btn btn-danger" onClick={onClose} style={{ flex: 1 }}>
+              <button
+                className="btn btn-danger"
+                onClick={onClose}
+                style={{ flex: 1 }}
+              >
                 Cancel
               </button>
             </div>
@@ -107,28 +168,45 @@ export default function EnrollModal({ onClose, onEnrolled }) {
           <>
             <video
               ref={videoRef}
-              autoPlay muted
+              autoPlay
+              muted
               style={{
-                width: '100%', borderRadius: '16px',
-                marginBottom: '16px', transform: 'scaleX(-1)',
+                width: '100%',
+                borderRadius: '16px',
+                marginBottom: '16px',
+                transform: 'scaleX(-1)',
                 border: '1px solid var(--border)'
               }}
             />
+
             {status && (
               <p style={{
-                color: 'var(--accent-primary)', marginBottom: '12px',
-                textAlign: 'center', letterSpacing: '1px'
+                color: status.includes('❌')
+                  ? 'var(--danger)'
+                  : 'var(--accent-primary)',
+                marginBottom: '12px',
+                textAlign: 'center',
+                letterSpacing: '1px',
+                fontSize: '13px'
               }}>
                 {status}
               </p>
             )}
+
             <div className="modal-actions">
-              <button className="btn btn-success" onClick={captureFace} style={{ flex: 1 }}>
+              <button
+                className="btn btn-success"
+                onClick={captureFace}
+                style={{ flex: 1 }}
+              >
                 📸 Capture Face
               </button>
               <button
                 className="btn btn-danger"
-                onClick={() => { stopCamera(); setStep('form') }}
+                onClick={() => {
+                  stopCamera()
+                  setStep('form')
+                }}
                 style={{ flex: 1 }}
               >
                 Back
