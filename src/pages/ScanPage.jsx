@@ -53,9 +53,26 @@ export default function ScanPage() {
     setStatus('')
   }
 
+  async function loadModels() {
+    try {
+      setStatus('Loading AI models...')
+      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model'
+      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL)
+      await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL)
+      await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+      setModelsLoaded(true)
+      return true
+    } catch (err) {
+      console.error('Model loading error:', err)
+      setStatus('❌ Failed to load AI models!')
+      return false
+    }
+  }
+
   async function verifyUSN() {
     if (!usn.trim()) { alert('Enter your USN!'); return }
     setStatus('Looking up student...')
+
     const { data: studentData } = await supabase
       .from('students')
       .select('*')
@@ -67,7 +84,6 @@ export default function ScanPage() {
       return
     }
 
-    // Check already marked
     const { data: existing } = await supabase
       .from('attendance_logs')
       .select('id')
@@ -77,17 +93,15 @@ export default function ScanPage() {
 
     if (existing) {
       setStudent(studentData)
-      await loadAttendance(studentData.id)
+      await loadAttendanceData(studentData.id)
       setStep('already')
       return
     }
 
     setStudent(studentData)
-    setStatus('Loading AI...')
-    await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
-    await faceapi.nets.faceLandmark68Net.loadFromUri('/models')
-    await faceapi.nets.faceRecognitionNet.loadFromUri('/models')
-    setModelsLoaded(true)
+    const loaded = await loadModels()
+    if (!loaded) return
+
     setStatus('Checking your location...')
     checkGPS(studentData)
   }
@@ -96,8 +110,10 @@ export default function ScanPage() {
     navigator.geolocation.getCurrentPosition(
       async pos => {
         const dist = getDistance(
-          pos.coords.latitude, pos.coords.longitude,
-          COLLEGE_LAT, COLLEGE_LNG
+          pos.coords.latitude,
+          pos.coords.longitude,
+          COLLEGE_LAT,
+          COLLEGE_LNG
         )
         if (dist <= MAX_DISTANCE_METERS) {
           setChecks(c => ({ ...c, gps: true }))
@@ -118,11 +134,18 @@ export default function ScanPage() {
   }
 
   async function startCamera(studentData) {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
-    streamRef.current = stream
-    if (videoRef.current) videoRef.current.srcObject = stream
-    setStep('camera')
-    setStatus('Look at camera and click Scan Face!')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' }
+      })
+      streamRef.current = stream
+      if (videoRef.current) videoRef.current.srcObject = stream
+      setStep('camera')
+      setStatus('Look at camera and click Scan Face!')
+    } catch (err) {
+      setStep('failed')
+      setStatus('❌ Camera access denied!')
+    }
   }
 
   function stopCamera() {
@@ -131,50 +154,71 @@ export default function ScanPage() {
 
   async function scanFace() {
     setStatus('Scanning your face...')
-    const detection = await faceapi
-      .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks().withFaceDescriptor()
+    try {
+      const detection = await faceapi
+        .detectSingleFace(
+          videoRef.current,
+          new faceapi.TinyFaceDetectorOptions()
+        )
+        .withFaceLandmarks()
+        .withFaceDescriptor()
 
-    if (!detection) { setStatus('❌ No face detected! Try again.'); return }
+      if (!detection) {
+        setStatus('❌ No face detected! Try again.')
+        return
+      }
 
-    setStatus('Matching face...')
-    if (!student.face_descriptor) {
-      setStatus('❌ No face enrolled! Contact teacher.')
-      return
+      setStatus('Matching face...')
+
+      if (!student.face_descriptor) {
+        setStatus('❌ No face enrolled! Contact teacher.')
+        return
+      }
+
+      const stored = new Float32Array(student.face_descriptor)
+      const distance = faceapi.euclideanDistance(
+        Array.from(detection.descriptor),
+        Array.from(stored)
+      )
+
+      if (distance > 0.5) {
+        setChecks(c => ({ ...c, face: false }))
+        setStep('failed')
+        setStatus('❌ Face not recognized!')
+        return
+      }
+
+      setChecks(c => ({ ...c, face: true }))
+      setStatus('Marking attendance...')
+
+      const { error } = await supabase
+        .from('attendance_logs')
+        .insert({
+          session_id: session.id,
+          student_id: student.id,
+          face_matched: true,
+          gps_verified: true,
+          status: 'present'
+        })
+
+      stopCamera()
+
+      if (error && error.code === '23505') {
+        setStep('already')
+        await loadAttendanceData(student.id)
+      } else {
+        await loadAttendanceData(student.id)
+        setStep('success')
+        setStatus('✅ Attendance marked successfully!')
+      }
+    } catch (err) {
+      console.error('Scan error:', err)
+      setStatus('❌ Error scanning face!')
     }
-
-    const stored = new Float32Array(student.face_descriptor)
-    const distance = faceapi.euclideanDistance(
-      Array.from(detection.descriptor),
-      Array.from(stored)
-    )
-
-    if (distance > 0.5) {
-      setChecks(c => ({ ...c, face: false }))
-      setStep('failed')
-      setStatus('❌ Face not recognized!')
-      return
-    }
-
-    setChecks(c => ({ ...c, face: true }))
-    setStatus('Marking attendance...')
-
-    await supabase.from('attendance_logs').insert({
-      session_id: session.id,
-      student_id: student.id,
-      face_matched: true,
-      gps_verified: true,
-      status: 'present'
-    })
-
-    stopCamera()
-    await loadAttendance(student.id)
-    setStep('success')
-    setStatus('✅ Attendance marked successfully!')
   }
 
-  async function loadAttendance(studentId) {
-    const { data: allLogs } = await supabase
+  async function loadAttendanceData(studentId) {
+    const { data: logs } = await supabase
       .from('attendance_logs')
       .select('*, attendance_sessions(subject, period, created_at)')
       .eq('student_id', studentId)
@@ -186,21 +230,22 @@ export default function ScanPage() {
 
     const subjectMap = {}
     allSessions?.forEach(s => {
-      if (!subjectMap[s.subject]) subjectMap[s.subject] = { total: 0, present: 0 }
+      if (!subjectMap[s.subject])
+        subjectMap[s.subject] = { total: 0, present: 0 }
       subjectMap[s.subject].total++
     })
-    allLogs?.forEach(l => {
+    logs?.forEach(l => {
       const subj = l.attendance_sessions?.subject
       if (subj && subjectMap[subj]) subjectMap[subj].present++
     })
 
     const totalClasses = allSessions?.length || 0
-    const totalPresent = allLogs?.length || 0
+    const totalPresent = logs?.length || 0
     const overallPct = totalClasses > 0
       ? Math.round((totalPresent / totalClasses) * 100) : 0
 
     setAttendanceData({
-      logs: allLogs || [],
+      logs: logs || [],
       subjectMap,
       totalClasses,
       totalPresent,
@@ -236,10 +281,7 @@ export default function ScanPage() {
           background: 'linear-gradient(90deg, #fff, var(--accent-primary))',
           WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
         }}>SMARTEND</div>
-        <div style={{
-          width: '1px', height: '20px',
-          background: 'var(--border)'
-        }} />
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)' }} />
         <div style={{
           fontSize: '11px', letterSpacing: '2px',
           color: 'var(--text-secondary)', textTransform: 'uppercase'
@@ -247,6 +289,15 @@ export default function ScanPage() {
       </div>
 
       <div style={{ paddingTop: '80px', width: '100%', maxWidth: '480px' }}>
+
+        {/* LOADING */}
+        {step === 'loading' && (
+          <div className="scan-card" style={{ textAlign: 'center' }}>
+            <div className="status-icon">⏳</div>
+            <h2>Verifying...</h2>
+            <p>{status}</p>
+          </div>
+        )}
 
         {/* USN ENTRY */}
         {step === 'usn' && (
@@ -264,30 +315,27 @@ export default function ScanPage() {
               value={usn}
               onChange={e => setUsn(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && verifyUSN()}
-              style={{ textAlign: 'center', letterSpacing: '3px', fontSize: '16px' }}
+              style={{
+                textAlign: 'center',
+                letterSpacing: '3px',
+                fontSize: '16px'
+              }}
             />
             {status && (
               <p style={{
-                color: 'var(--accent-primary)', fontSize: '13px',
-                letterSpacing: '1px', marginBottom: '16px'
+                color: status.includes('❌')
+                  ? 'var(--danger)'
+                  : 'var(--accent-primary)',
+                fontSize: '13px',
+                letterSpacing: '1px',
+                marginBottom: '16px'
               }}>{status}</p>
             )}
             <button
               className="btn btn-primary"
               onClick={verifyUSN}
               style={{ width: '100%' }}
-            >
-              ▶ Continue
-            </button>
-          </div>
-        )}
-
-        {/* LOADING */}
-        {step === 'loading' && (
-          <div className="scan-card" style={{ textAlign: 'center' }}>
-            <div className="status-icon">⏳</div>
-            <h2>Verifying...</h2>
-            <p>{status}</p>
+            >▶ Continue</button>
           </div>
         )}
 
@@ -297,7 +345,9 @@ export default function ScanPage() {
             <div className="corner-deco tl" />
             <div className="corner-deco br" />
             <h2 style={{ marginBottom: '8px' }}>Face Verification</h2>
-            <p style={{ marginBottom: '16px' }}>Hi {student?.name}! Look at the camera</p>
+            <p style={{ marginBottom: '16px' }}>
+              Hi {student?.name}! Look at the camera
+            </p>
 
             <div style={{ marginBottom: '16px' }}>
               {[
@@ -317,19 +367,30 @@ export default function ScanPage() {
             </div>
 
             <video
-              ref={videoRef} autoPlay muted
+              ref={videoRef}
+              autoPlay
+              muted
               style={{
-                width: '100%', borderRadius: '16px',
-                marginBottom: '16px', transform: 'scaleX(-1)',
+                width: '100%',
+                borderRadius: '16px',
+                marginBottom: '16px',
+                transform: 'scaleX(-1)',
                 border: '1px solid var(--border)'
               }}
             />
+
             {status && (
               <p style={{
-                color: 'var(--accent-primary)', fontSize: '13px',
-                letterSpacing: '1px', marginBottom: '16px', textAlign: 'center'
+                color: status.includes('❌')
+                  ? 'var(--danger)'
+                  : 'var(--accent-primary)',
+                fontSize: '13px',
+                letterSpacing: '1px',
+                marginBottom: '16px',
+                textAlign: 'center'
               }}>{status}</p>
             )}
+
             <button
               className="btn btn-primary"
               onClick={scanFace}
@@ -363,7 +424,9 @@ export default function ScanPage() {
           <div className="scan-card">
             <div className="status-icon">❌</div>
             <h2>Verification Failed</h2>
-            <p style={{ color: 'var(--danger)', marginBottom: '24px' }}>{status}</p>
+            <p style={{ color: 'var(--danger)', marginBottom: '24px' }}>
+              {status}
+            </p>
             <div style={{ marginBottom: '24px' }}>
               {[
                 { key: 'session', label: 'Session Valid' },
@@ -392,6 +455,7 @@ export default function ScanPage() {
   )
 }
 
+// ─── STUDENT DASHBOARD ─────────────────────────────────────
 function StudentDashboard({ student, attendanceData, session, isNew }) {
   const { overallPct, subjectMap, logs, totalClasses, totalPresent } = attendanceData
   const isSafe = overallPct >= 75
@@ -400,7 +464,8 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
 
   return (
     <div style={{ width: '100%', paddingBottom: '40px' }}>
-      {/* Welcome Card */}
+
+      {/* WELCOME CARD */}
       <div className="scan-card" style={{ marginBottom: '16px' }}>
         <div className="corner-deco tl" />
         <div className="corner-deco br" />
@@ -418,12 +483,12 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
             <div className="status-icon">⚠️</div>
             <h2>Already Marked</h2>
             <p style={{ marginBottom: '8px' }}>
-              Your attendance was already recorded for this session.
+              Attendance already recorded for this session.
             </p>
           </>
         )}
 
-        {/* Student Info */}
+        {/* STUDENT INFO */}
         <div style={{
           background: 'rgba(255,77,46,0.05)',
           border: '1px solid var(--border)',
@@ -441,13 +506,12 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
           }}>{student?.usn}</div>
         </div>
 
-        {/* Overall Ring */}
+        {/* RING */}
         <div className="attendance-ring">
           <svg className="ring-svg" viewBox="0 0 160 160">
             <circle className="ring-bg" cx="80" cy="80" r="70" />
             <circle
-              className="ring-fill"
-              cx="80" cy="80" r="70"
+              className="ring-fill" cx="80" cy="80" r="70"
               stroke={isSafe ? '#00e676' : '#ff4d2e'}
               style={{ strokeDashoffset: offset }}
             />
@@ -467,7 +531,7 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
           </div>
         </div>
 
-        {/* Stats Row */}
+        {/* STATS */}
         <div style={{
           display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
           gap: '10px'
@@ -497,13 +561,12 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
         </div>
       </div>
 
-      {/* Subject-wise Attendance */}
+      {/* SUBJECT WISE */}
       <div className="scan-card" style={{ marginBottom: '16px' }}>
         <h2 style={{
-          fontFamily: 'Orbitron, sans-serif',
-          fontSize: '13px', letterSpacing: '2px',
-          marginBottom: '20px', color: 'var(--text-primary)',
-          textTransform: 'uppercase'
+          fontFamily: 'Orbitron, sans-serif', fontSize: '13px',
+          letterSpacing: '2px', marginBottom: '20px',
+          color: 'var(--text-primary)', textTransform: 'uppercase'
         }}>📚 Subject-wise Attendance</h2>
 
         {Object.entries(subjectMap).map(([subject, data]) => {
@@ -543,19 +606,20 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
                 fontSize: '11px', color: 'var(--text-secondary)',
                 marginTop: '4px', letterSpacing: '1px'
               }}>
-                {data.present}/{data.total} classes attended
+                {data.present}/{data.total} classes
+                {!safe && ` — Need ${Math.ceil((75 * data.total / 100) - data.present)} more`}
               </div>
             </div>
           )
         })}
       </div>
 
-      {/* Recent Classes */}
+      {/* RECENT CLASSES */}
       <div className="scan-card">
         <h2 style={{
-          fontFamily: 'Orbitron, sans-serif',
-          fontSize: '13px', letterSpacing: '2px',
-          marginBottom: '20px', textTransform: 'uppercase'
+          fontFamily: 'Orbitron, sans-serif', fontSize: '13px',
+          letterSpacing: '2px', marginBottom: '20px',
+          textTransform: 'uppercase'
         }}>📅 Recent Classes</h2>
 
         {logs.slice(0, 10).map((log, i) => (
