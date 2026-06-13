@@ -4,7 +4,7 @@ import QRCode from 'qrcode'
 
 const COLLEGE_LAT = 13.0574
 const COLLEGE_LNG = 77.5955
-const QR_EXPIRY_SECONDS = 300
+const QR_EXPIRY_SECONDS = 60
 
 const SUBJECTS = [
   'Mathematics III',
@@ -65,8 +65,6 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
   }
 
   async function generateQRCode(token) {
-    // Use window.location.origin so it works on both
-    // localhost AND Vercel automatically
     const origin = window.location.origin
     const scanUrl = `${origin}/scan/${token}`
     const qr = await QRCode.toDataURL(scanUrl, {
@@ -92,7 +90,7 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
         qr_token: token,
         is_active: true,
         teacher_id: teacher?.id,
-        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+        expires_at: new Date(Date.now() + QR_EXPIRY_SECONDS * 1000).toISOString()
       })
       .select()
       .single()
@@ -136,7 +134,7 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
       .update({
         qr_token: newToken,
         is_active: true,
-        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+        expires_at: new Date(Date.now() + QR_EXPIRY_SECONDS * 1000).toISOString()
       })
       .eq('id', session.id)
 
@@ -151,9 +149,9 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
   const mins = String(Math.floor(timeLeft / 60)).padStart(2, '0')
   const secs = String(timeLeft % 60).padStart(2, '0')
   const timerPct = (timeLeft / QR_EXPIRY_SECONDS) * 100
-  const timerColor = timeLeft > 120
+  const timerColor = timeLeft > 30
     ? 'var(--success)'
-    : timeLeft > 60
+    : timeLeft > 10
     ? 'var(--warning)'
     : 'var(--danger)'
 
@@ -320,10 +318,7 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
               borderRadius: '16px',
               marginBottom: '16px'
             }}>
-              <div style={{
-                fontSize: '48px',
-                marginBottom: '12px'
-              }}>⏰</div>
+              <div style={{ fontSize: '48px', marginBottom: '12px' }}>⏰</div>
               <div style={{
                 fontFamily: 'Orbitron, sans-serif',
                 fontSize: '14px',
@@ -336,18 +331,14 @@ export default function SessionManager({ teacher, onSessionStart, onSessionEnd }
                 color: 'var(--text-secondary)',
                 letterSpacing: '1px'
               }}>
-                QR expired after 5 minutes.<br />
+                QR expired after 1 minute.<br />
                 Generate a new one to continue.
               </div>
             </div>
           )}
 
           {/* ACTION BUTTONS */}
-          <div style={{
-            display: 'flex',
-            gap: '10px',
-            marginTop: '16px'
-          }}>
+          <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
             <button
               className="btn btn-secondary"
               onClick={refreshQR}
