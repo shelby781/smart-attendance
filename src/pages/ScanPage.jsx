@@ -3,26 +3,13 @@ import { useParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import * as faceapi from 'face-api.js'
 
-const COLLEGE_LAT = 13.0574
-const COLLEGE_LNG = 77.5955
-const MAX_DISTANCE_METERS = 100
-
-function getDistance(lat1, lng1, lat2, lng2) {
-  const R = 6371000
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLng = (lng2 - lng1) * Math.PI / 180
-  const a = Math.sin(dLat/2)**2 +
-    Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
-}
-
 export default function ScanPage() {
   const { token } = useParams()
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const [step, setStep] = useState('loading')
   const [status, setStatus] = useState('')
-  const [checks, setChecks] = useState({ session: null, gps: null, face: null })
+  const [checks, setChecks] = useState({ session: null, face: null })
   const [session, setSession] = useState(null)
   const [student, setStudent] = useState(null)
   const [usn, setUsn] = useState('')
@@ -102,35 +89,8 @@ export default function ScanPage() {
     const loaded = await loadModels()
     if (!loaded) return
 
-    setStatus('Checking your location...')
-    checkGPS(studentData)
-  }
-
-  function checkGPS(studentData) {
-    navigator.geolocation.getCurrentPosition(
-      async pos => {
-        const dist = getDistance(
-          pos.coords.latitude,
-          pos.coords.longitude,
-          COLLEGE_LAT,
-          COLLEGE_LNG
-        )
-        if (dist <= MAX_DISTANCE_METERS) {
-          setChecks(c => ({ ...c, gps: true }))
-          setStatus('📍 Location verified! Starting camera...')
-          startCamera(studentData)
-        } else {
-          setChecks(c => ({ ...c, gps: false }))
-          setStep('failed')
-          setStatus(`You are ${Math.round(dist)}m away from college!`)
-        }
-      },
-      () => {
-        setChecks(c => ({ ...c, gps: false }))
-        setStep('failed')
-        setStatus('Location access denied!')
-      }
-    )
+    setStatus('Starting camera...')
+    startCamera(studentData)
   }
 
   async function startCamera(studentData) {
@@ -197,7 +157,7 @@ export default function ScanPage() {
           session_id: session.id,
           student_id: student.id,
           face_matched: true,
-          gps_verified: true,
+          gps_verified: false,
           status: 'present'
         })
 
@@ -352,7 +312,6 @@ export default function ScanPage() {
             <div style={{ marginBottom: '16px' }}>
               {[
                 { key: 'session', label: 'Session Valid' },
-                { key: 'gps', label: 'GPS Location' },
                 { key: 'face', label: 'Face Match' },
               ].map(c => (
                 <div key={c.key} className={`check-item ${
@@ -430,7 +389,6 @@ export default function ScanPage() {
             <div style={{ marginBottom: '24px' }}>
               {[
                 { key: 'session', label: 'Session Valid' },
-                { key: 'gps', label: 'GPS Location' },
                 { key: 'face', label: 'Face Match' },
               ].map(c => (
                 <div key={c.key} className={`check-item ${
@@ -459,13 +417,11 @@ export default function ScanPage() {
 function StudentDashboard({ student, attendanceData, session, isNew }) {
   const { overallPct, subjectMap, logs, totalClasses, totalPresent } = attendanceData
   const isSafe = overallPct >= 75
-  const circumference = 440
-  const offset = circumference - (overallPct / 100) * circumference
+  const offset = 440 - (overallPct / 100) * 440
 
   return (
     <div style={{ width: '100%', paddingBottom: '40px' }}>
 
-      {/* WELCOME CARD */}
       <div className="scan-card" style={{ marginBottom: '16px' }}>
         <div className="corner-deco tl" />
         <div className="corner-deco br" />
@@ -488,7 +444,6 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
           </>
         )}
 
-        {/* STUDENT INFO */}
         <div style={{
           background: 'rgba(255,77,46,0.05)',
           border: '1px solid var(--border)',
@@ -506,7 +461,6 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
           }}>{student?.usn}</div>
         </div>
 
-        {/* RING */}
         <div className="attendance-ring">
           <svg className="ring-svg" viewBox="0 0 160 160">
             <circle className="ring-bg" cx="80" cy="80" r="70" />
@@ -531,7 +485,6 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
           </div>
         </div>
 
-        {/* STATS */}
         <div style={{
           display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
           gap: '10px'
@@ -561,7 +514,6 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
         </div>
       </div>
 
-      {/* SUBJECT WISE */}
       <div className="scan-card" style={{ marginBottom: '16px' }}>
         <h2 style={{
           fontFamily: 'Orbitron, sans-serif', fontSize: '13px',
@@ -598,7 +550,6 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
                   height: '100%', width: `${pct}%`,
                   background: safe ? 'var(--success)' : 'var(--danger)',
                   borderRadius: '3px',
-                  boxShadow: `0 0 8px ${safe ? 'rgba(0,230,118,0.5)' : 'rgba(255,77,46,0.5)'}`,
                   transition: 'width 1.5s cubic-bezier(0.4,0,0.2,1)'
                 }} />
               </div>
@@ -607,14 +558,13 @@ function StudentDashboard({ student, attendanceData, session, isNew }) {
                 marginTop: '4px', letterSpacing: '1px'
               }}>
                 {data.present}/{data.total} classes
-                {!safe && ` — Need ${Math.ceil((75 * data.total / 100) - data.present)} more`}
+                {!safe && ` — Need ${Math.max(0, Math.ceil((75 * data.total / 100) - data.present))} more`}
               </div>
             </div>
           )
         })}
       </div>
 
-      {/* RECENT CLASSES */}
       <div className="scan-card">
         <h2 style={{
           fontFamily: 'Orbitron, sans-serif', fontSize: '13px',
