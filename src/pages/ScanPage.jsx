@@ -96,7 +96,11 @@ export default function ScanPage() {
   async function startCamera(studentData) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' }
+        video: {
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        }
       })
       streamRef.current = stream
       if (videoRef.current) videoRef.current.srcObject = stream
@@ -115,16 +119,18 @@ export default function ScanPage() {
   async function scanFace() {
     setStatus('Scanning your face...')
     try {
+      const options = new faceapi.TinyFaceDetectorOptions({
+        inputSize: 224,
+        scoreThreshold: 0.3
+      })
+
       const detection = await faceapi
-        .detectSingleFace(
-          videoRef.current,
-          new faceapi.TinyFaceDetectorOptions()
-        )
+        .detectSingleFace(videoRef.current, options)
         .withFaceLandmarks()
         .withFaceDescriptor()
 
       if (!detection) {
-        setStatus('❌ No face detected! Try again.')
+        setStatus('❌ No face detected! Make sure face is clearly visible and well lit.')
         return
       }
 
@@ -141,10 +147,12 @@ export default function ScanPage() {
         Array.from(stored)
       )
 
-      if (distance > 0.5) {
+      console.log('Face distance:', distance)
+
+      if (distance > 0.6) {
         setChecks(c => ({ ...c, face: false }))
         setStep('failed')
-        setStatus('❌ Face not recognized!')
+        setStatus('❌ Face not recognized! Try again in better lighting.')
         return
       }
 
@@ -173,7 +181,7 @@ export default function ScanPage() {
       }
     } catch (err) {
       console.error('Scan error:', err)
-      setStatus('❌ Error scanning face!')
+      setStatus('❌ Error scanning face! ' + err.message)
     }
   }
 
@@ -241,7 +249,10 @@ export default function ScanPage() {
           background: 'linear-gradient(90deg, #fff, var(--accent-primary))',
           WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
         }}>SMARTEND</div>
-        <div style={{ width: '1px', height: '20px', background: 'var(--border)' }} />
+        <div style={{
+          width: '1px', height: '20px',
+          background: 'var(--border)'
+        }} />
         <div style={{
           fontSize: '11px', letterSpacing: '2px',
           color: 'var(--text-secondary)', textTransform: 'uppercase'
@@ -305,8 +316,16 @@ export default function ScanPage() {
             <div className="corner-deco tl" />
             <div className="corner-deco br" />
             <h2 style={{ marginBottom: '8px' }}>Face Verification</h2>
-            <p style={{ marginBottom: '16px' }}>
-              Hi {student?.name}! Look at the camera
+            <p style={{ marginBottom: '8px' }}>
+              Hi {student?.name}!
+            </p>
+            <p style={{
+              fontSize: '12px',
+              color: 'var(--text-secondary)',
+              marginBottom: '16px',
+              letterSpacing: '1px'
+            }}>
+              💡 Good lighting helps — face the light source
             </p>
 
             <div style={{ marginBottom: '16px' }}>
@@ -329,6 +348,7 @@ export default function ScanPage() {
               ref={videoRef}
               autoPlay
               muted
+              playsInline
               style={{
                 width: '100%',
                 borderRadius: '16px',
@@ -383,9 +403,10 @@ export default function ScanPage() {
           <div className="scan-card">
             <div className="status-icon">❌</div>
             <h2>Verification Failed</h2>
-            <p style={{ color: 'var(--danger)', marginBottom: '24px' }}>
-              {status}
-            </p>
+            <p style={{
+              color: 'var(--danger)',
+              marginBottom: '24px'
+            }}>{status}</p>
             <div style={{ marginBottom: '24px' }}>
               {[
                 { key: 'session', label: 'Session Valid' },

@@ -39,12 +39,17 @@ export default function EnrollModal({ onClose, onEnrolled, teacher }) {
     setStep('camera')
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' }
+        video: {
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        }
       })
       streamRef.current = stream
       if (videoRef.current) videoRef.current.srcObject = stream
     } catch (err) {
       setStatus('❌ Camera access denied!')
+      console.error(err)
     }
   }
 
@@ -55,16 +60,18 @@ export default function EnrollModal({ onClose, onEnrolled, teacher }) {
   async function captureFace() {
     setStatus('⚡ Detecting face...')
     try {
+      const options = new faceapi.TinyFaceDetectorOptions({
+        inputSize: 224,
+        scoreThreshold: 0.3
+      })
+
       const detection = await faceapi
-        .detectSingleFace(
-          videoRef.current,
-          new faceapi.TinyFaceDetectorOptions()
-        )
+        .detectSingleFace(videoRef.current, options)
         .withFaceLandmarks()
         .withFaceDescriptor()
 
       if (!detection) {
-        setStatus('❌ No face detected! Try again.')
+        setStatus('❌ No face detected! Make sure your face is clearly visible and well lit.')
         return
       }
 
@@ -95,7 +102,7 @@ export default function EnrollModal({ onClose, onEnrolled, teacher }) {
 
     } catch (err) {
       console.error('Face capture error:', err)
-      setStatus('❌ Error capturing face!')
+      setStatus('❌ Error capturing face! ' + err.message)
     }
   }
 
@@ -156,10 +163,21 @@ export default function EnrollModal({ onClose, onEnrolled, teacher }) {
 
         {step === 'camera' && (
           <>
+            <p style={{
+              fontSize: '12px',
+              color: 'var(--text-secondary)',
+              marginBottom: '12px',
+              textAlign: 'center',
+              letterSpacing: '1px'
+            }}>
+              💡 Make sure your face is well lit and clearly visible
+            </p>
+
             <video
               ref={videoRef}
               autoPlay
               muted
+              playsInline
               style={{
                 width: '100%',
                 borderRadius: '16px',
